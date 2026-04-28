@@ -506,3 +506,89 @@ h1 {
   .report-hero { flex-direction: column; gap: 24px; }
   .search-compact { padding: 24px 20px; }
 }
+
+.chart-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.chart-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.chart-title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 2px;
+}
+
+.chart-change {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.chart-change.positive { color: #00C853; }
+.chart-change.negative { color: #FF1744; }
+
+.time-range-btns {
+  display: flex;
+  gap: 4px;
+}
+
+.range-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.range-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.range-active {
+  background: rgba(0,212,255,0.1) !important;
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+}
+
+.chart-section {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 24px;
+  margin-bottom: 20px;
+}
+
+.chart-tooltip {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+
+.tt-date {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.tt-price {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}

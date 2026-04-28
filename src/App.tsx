@@ -3,8 +3,12 @@ import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, RadarChart
 import './App.css'
 
 const API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY
+const AV_KEY = import.meta.env.VITE_ALPHA_VANTAGE_KEY
 
 const POPULAR_TICKERS = ['AAPL', 'NVDA', 'TSLA', 'MSFT', 'GOOGL', 'META', 'AMZN', 'JPM']
+const TIME_RANGES = ['1W', '1M', '3M', '6M', '1Y']
+
+interface PricePoint { date: string; price: number }
 
 interface ResearchReport {
   company: string
@@ -22,34 +26,93 @@ interface ResearchReport {
 }
 
 type StepStatus = 'idle' | 'active' | 'done' | 'error'
+interface Step { id: string; label: string; status: StepStatus }
 
-interface Step {
-  id: string
-  label: string
-  status: StepStatus
+async function fetchDailyPrices(ticker: string): Promise<PricePoint[]> {
+  try {
+    const res = await fetch(`https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${ticker}&outputsize=compact&apikey=${AV_KEY}`)
+    const data = await res.json()
+    const series = data['Time Series (Daily)']
+    if (!series) return []
+    return Object.entries(series)
+      .slice(0, 30)
+      .reverse()
+      .map(([date, vals]: [string, any]) => ({
+        date: date.slice(5),
+        price: parseFloat(vals['4. close'])
+      }))
+  } catch { return [] }
 }
 
-async function fetchAndAnalyze(ticker: string, onStep: (id: string, status: StepStatus) => void): Promise<ResearchReport> {
+async function fetchWeeklyPrices(ticker: string): Promise<PricePoint[]> {
+  try {
+    const res = await fetch(`https://www.alphavantage.co/query?function=TIME_SERIES_WEEKLY&symbol=${ticker}&apikey=${AV_KEY}`)
+    const data = await res.json()
+    const series = data['Weekly Time Series']
+    if (!series) return []
+    return Object.entries(series)
+      .slice(0, 52)
+      .reverse()
+      .map(([date, vals]: [string, any]) => ({
+        date: date.slice(0, 7),
+        price: parseFloat(vals['4. close'])
+      }))
+  } catch { return [] }
+}
+
+function filterPrices(prices: PricePoint[], dailyPrices: PricePoint[], range: string): PricePoint[] {
+  if (range === '1W' || range === '1M') {
+    if (!dailyPrices.length) return []
+    if (range === '1W') return dailyPrices.slice(-7)
+    if (range === '1M') return dailyPrices.slice(-30)
+  }
+  if (!prices.length) return []
+  if (range === '3M') return prices.slice(-13)
+  if (range === '6M') return prices.slice(-26)
+  return prices
+}
+
+function getXAxisInterval(range: string, dataLen: number): number {
+  if (range === '1W') return 1
+  if (range === '1M') return 4
+  if (range === '3M') return 2
+  if (range === '6M') return 4
+  return 7
+}
+
+async function getCIK(ticker: string): Promise<string> {
+  const res = await fetch('https://www.sec.gov/files/company_tickers.json', {
+    headers: { 'User-Agent': 'FinResearch yuvrajjindal2020@gmail.com' }
+  })
+  const data = await res.json()
+  const entry = Object.values(data as Record<string, { ticker: string; cik_str: number }>)
+    .find((c) => c.ticker.toUpperCase() === ticker.toUpperCase())
+  if (!entry) throw new Error('Ticker not found')
+  return String(entry.cik_str).padStart(10, '0')
+}
+
+async function fetchAndAnalyze(ticker: string, onStep: (id: string, status: StepStatus) => void): Promise<{ report: ResearchReport; prices: PricePoint[]; dailyPrices: PricePoint[] }> {
   onStep('fetch', 'active')
-  
-  // Fetch latest 10-K filing from SEC EDGAR
-  const searchUrl = `https://efts.sec.gov/LATEST/search-index?q=%22${ticker}%22&dateRange=custom&startdt=2024-01-01&forms=10-K`
-  
+
+  const [weeklyPrices, dailyPrices] = await Promise.all([
+    fetchWeeklyPrices(ticker),
+    fetchDailyPrices(ticker)
+  ])
+
   let filingText = ''
   try {
     const searchRes = await fetch(`https://data.sec.gov/submissions/CIK${await getCIK(ticker)}.json`, {
       headers: { 'User-Agent': 'FinResearch yuvrajjindal2020@gmail.com' }
     })
     const data = await searchRes.json()
-    filingText = `Company: ${data.name}\nTicker: ${ticker}\nSIC: ${data.sic}\nSIC Description: ${data.sicDescription}\nFiscal Year End: ${data.fiscalYearEnd}\nState: ${data.stateOfIncorporation}`
-    onStep('fetch', 'done')
+    filingText = `Company: ${data.name}\nTicker: ${ticker}\nSIC: ${data.sic}\nSIC Description: ${data.sicDescription}\nFiscal Year End: ${data.fiscalYearEnd}`
   } catch {
-    filingText = `Ticker: ${ticker} - Using available market knowledge for analysis`
-    onStep('fetch', 'done')
+    filingText = `Ticker: ${ticker}`
   }
 
+  onStep('fetch', 'done')
   onStep('analyze', 'active')
-  
+
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -63,9 +126,9 @@ async function fetchAndAnalyze(ticker: string, onStep: (id: string, status: Step
       max_tokens: 2500,
       messages: [{
         role: 'user',
-        content: `You are a senior equity research analyst. Generate a comprehensive research report for ${ticker} based on your knowledge of this company. Return ONLY valid JSON, no other text.
+        content: `You are a senior equity research analyst. Generate a comprehensive research report for ${ticker}. Return ONLY valid JSON, no other text.
 
-Filing data available: ${filingText}
+Filing data: ${filingText}
 
 Return this exact JSON:
 {
@@ -110,28 +173,32 @@ Return this exact JSON:
 
   const data = await response.json()
   const clean = data.content[0].text.replace(/```json|```/g, '').trim()
-  const result = JSON.parse(clean)
-  
+  const report = JSON.parse(clean)
+
   onStep('report', 'done')
-  return result
+  return { report, prices: weeklyPrices, dailyPrices }
 }
 
-async function getCIK(ticker: string): Promise<string> {
-  const res = await fetch('https://www.sec.gov/files/company_tickers.json', {
-    headers: { 'User-Agent': 'FinResearch yuvrajjindal2020@gmail.com' }
-  })
-  const data = await res.json()
-  const entry = Object.values(data as Record<string, { ticker: string; cik_str: number }>)
-    .find((c) => c.ticker.toUpperCase() === ticker.toUpperCase())
-  if (!entry) throw new Error('Ticker not found')
-  return String(entry.cik_str).padStart(10, '0')
+const CustomTooltip = ({ active, payload, label }: any) => {
+  if (active && payload && payload.length) {
+    return (
+      <div className="chart-tooltip">
+        <div className="tt-date">{label}</div>
+        <div className="tt-price">${payload[0].value.toFixed(2)}</div>
+      </div>
+    )
+  }
+  return null
 }
 
 export default function App() {
   const [ticker, setTicker] = useState('')
   const [report, setReport] = useState<ResearchReport | null>(null)
+  const [prices, setPrices] = useState<PricePoint[]>([])
+  const [dailyPrices, setDailyPrices] = useState<PricePoint[]>([])
+  const [timeRange, setTimeRange] = useState('1Y')
   const [steps, setSteps] = useState<Step[]>([
-    { id: 'fetch', label: 'Fetching SEC filing data', status: 'idle' },
+    { id: 'fetch', label: 'Fetching SEC & market data', status: 'idle' },
     { id: 'analyze', label: 'Running AI analysis', status: 'idle' },
     { id: 'report', label: 'Generating research report', status: 'idle' },
   ])
@@ -146,18 +213,28 @@ export default function App() {
   const handleSearch = async (t?: string) => {
     const sym = (t || ticker).toUpperCase().trim()
     if (!sym) return
+    if (sym.length > 5) {
+      setError('Please enter a valid US stock ticker (e.g. AAPL, TSLA, NVDA) — not a company name.')
+      return
+    }
     setTicker(sym)
     setLoading(true)
     setError('')
     setReport(null)
+    setPrices([])
+    setDailyPrices([])
     setSearched(true)
+    setTimeRange('1Y')
     setSteps(prev => prev.map(s => ({ ...s, status: 'idle' })))
 
     try {
-      const result = await fetchAndAnalyze(sym, updateStep)
-      setReport(result)
+      const { report: r, prices: p, dailyPrices: dp } = await fetchAndAnalyze(sym, updateStep)
+      setReport(r)
+      setPrices(p)
+      setDailyPrices(dp)
     } catch (e) {
-      setError('Could not generate report. Try a major US stock ticker like AAPL or TSLA.')
+      setError(`"${sym}" not found. Try a valid US stock ticker like AAPL, TSLA, NVDA, JPM, or MSFT.`)
+      setSearched(false)
       setSteps(prev => prev.map(s => s.status === 'active' ? { ...s, status: 'error' } : s))
     }
     setLoading(false)
@@ -166,6 +243,14 @@ export default function App() {
   const getRiskColor = (level: string) => level === 'HIGH' ? '#FF1744' : level === 'MEDIUM' ? '#FFB300' : '#00C853'
   const getTrendIcon = (trend: string) => trend === 'up' ? '↑' : trend === 'down' ? '↓' : '→'
   const getTrendColor = (trend: string) => trend === 'up' ? '#00C853' : trend === 'down' ? '#FF1744' : '#888'
+
+  const filteredPrices = filterPrices(prices, dailyPrices, timeRange)
+  const priceChange = filteredPrices.length >= 2
+    ? ((filteredPrices[filteredPrices.length - 1].price - filteredPrices[0].price) / filteredPrices[0].price * 100).toFixed(1)
+    : null
+  const isPositive = priceChange ? parseFloat(priceChange) >= 0 : true
+  const chartColor = report?.verdict_color || '#00D4FF'
+  const xInterval = getXAxisInterval(timeRange, filteredPrices.length)
 
   return (
     <div className="app">
@@ -179,10 +264,9 @@ export default function App() {
           <div className="hero-text">
             <div className="hero-eyebrow">INSTITUTIONAL RESEARCH · POWERED BY AI</div>
             <h1>Research any stock.<br /><span className="hero-glow">In seconds.</span></h1>
-            <p>Type a ticker and get a Goldman Sachs-style research report — financials, risks, catalysts, and a price target — automatically generated from SEC filings.</p>
+            <p>Type a ticker and get a Goldman Sachs-style research report — financials, risks, catalysts, live price history, and a price target — automatically generated from SEC filings.</p>
           </div>
         )}
-
         <div className="search-bar-wrap">
           <div className="search-bar">
             <span className="search-prefix">$</span>
@@ -221,7 +305,7 @@ export default function App() {
         </div>
       )}
 
-      {error && <div className="error-banner">{error}</div>}
+      {error && <div className="error-banner">⚠ {error}</div>}
 
       {report && (
         <div className="report">
@@ -243,8 +327,48 @@ export default function App() {
             <p className="thesis-text">{report.thesis}</p>
           </div>
 
+          {(prices.length > 0 || dailyPrices.length > 0) && (
+            <div className="chart-section">
+              <div className="chart-header">
+                <div className="chart-left">
+                  <div className="chart-title">PRICE HISTORY</div>
+                  {priceChange && (
+                    <div className={`chart-change ${isPositive ? 'positive' : 'negative'}`}>
+                      {isPositive ? '↑' : '↓'} {Math.abs(parseFloat(priceChange))}%
+                    </div>
+                  )}
+                </div>
+                <div className="time-range-btns">
+                  {TIME_RANGES.map(r => (
+                    <button
+                      key={r}
+                      className={`range-btn ${timeRange === r ? 'range-active' : ''}`}
+                      onClick={() => setTimeRange(r)}
+                    >
+                      {r}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <ResponsiveContainer width="100%" height={220}>
+                <AreaChart data={filteredPrices} margin={{ top: 10, right: 0, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="priceGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={chartColor} stopOpacity={0.2} />
+                      <stop offset="95%" stopColor={chartColor} stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <XAxis dataKey="date" tick={{ fill: '#444', fontSize: 10 }} tickLine={false} axisLine={false} interval={xInterval} />
+                  <YAxis tick={{ fill: '#444', fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={v => `$${v}`} width={55} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Area type="monotone" dataKey="price" stroke={chartColor} strokeWidth={2} fill="url(#priceGrad)" dot={false} animationDuration={800} animationEasing="ease-out" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
           <div className="report-grid">
-            <div className="grid-card financials-card">
+            <div className="grid-card">
               <div className="card-head">KEY METRICS</div>
               {report.financials.map((f, i) => (
                 <div key={i} className="metric-row">
@@ -255,7 +379,7 @@ export default function App() {
               ))}
             </div>
 
-            <div className="grid-card radar-card">
+            <div className="grid-card">
               <div className="card-head">INVESTMENT SCORECARD</div>
               <ResponsiveContainer width="100%" height={220}>
                 <RadarChart data={report.scores}>
@@ -266,7 +390,7 @@ export default function App() {
               </ResponsiveContainer>
             </div>
 
-            <div className="grid-card catalysts-card">
+            <div className="grid-card">
               <div className="card-head">CATALYSTS</div>
               {report.catalysts.map((c, i) => (
                 <div key={i} className="catalyst-item">
@@ -276,7 +400,7 @@ export default function App() {
               ))}
             </div>
 
-            <div className="grid-card risks-card">
+            <div className="grid-card">
               <div className="card-head">KEY RISKS</div>
               {report.risks.map((r, i) => (
                 <div key={i} className="risk-item">
