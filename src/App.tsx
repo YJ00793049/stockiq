@@ -72,7 +72,7 @@ function filterPrices(prices: PricePoint[], dailyPrices: PricePoint[], range: st
   return prices
 }
 
-function getXAxisInterval(range: string, dataLen: number): number {
+function getXAxisInterval(range: string, _dataLen: number): number {
   if (range === '1W') return 1
   if (range === '1M') return 4
   if (range === '3M') return 2
