@@ -350,7 +350,7 @@ export default function App() {
                   ))}
                 </div>
               </div>
-              <ResponsiveContainer width="100%" height={220}>
+              <div className="chart-inner"><ResponsiveContainer width="100%" height={220}>
                 <AreaChart data={filteredPrices} margin={{ top: 10, right: 0, left: 0, bottom: 0 }}>
                   <defs>
                     <linearGradient id="priceGrad" x1="0" y1="0" x2="0" y2="1">
@@ -363,7 +363,7 @@ export default function App() {
                   <Tooltip content={<CustomTooltip />} />
                   <Area type="monotone" dataKey="price" stroke={chartColor} strokeWidth={2} fill="url(#priceGrad)" dot={false} animationDuration={800} animationEasing="ease-out" />
                 </AreaChart>
-              </ResponsiveContainer>
+              </ResponsiveContainer></div>
             </div>
           )}
 
@@ -381,13 +381,13 @@ export default function App() {
 
             <div className="grid-card">
               <div className="card-head">INVESTMENT SCORECARD</div>
-              <ResponsiveContainer width="100%" height={220}>
+              <div className="chart-inner"><ResponsiveContainer width="100%" height={220}>
                 <RadarChart data={report.scores}>
                   <PolarGrid stroke="rgba(255,255,255,0.06)" />
                   <PolarAngleAxis dataKey="name" tick={{ fill: '#555', fontSize: 10 }} />
                   <Radar dataKey="value" stroke="#00D4FF" fill="#00D4FF" fillOpacity={0.1} strokeWidth={1.5} />
                 </RadarChart>
-              </ResponsiveContainer>
+              </ResponsiveContainer></div>
             </div>
 
             <div className="grid-card">
